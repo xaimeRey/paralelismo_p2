@@ -2,6 +2,9 @@
 #include <math.h>
 #include <mpi.h>
 
+int MPI_FlattreeColectiva(void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm);
+int MPI_BinomialColectiva(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm);
+
 int main(int argc, char *argv[])
 {
     MPI_Init(&argc, &argv);
@@ -25,14 +28,9 @@ int main(int argc, char *argv[])
         {
             printf("Enter the number of intervals: (0 quits) \n");
             scanf("%d", &n);
-
-            for (int i = 1; i < numprocs; i++)
-            {
-                MPI_Send(&n, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-            }
         }
-        else
-            MPI_Recv(&n, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &status);
+        // MPI_Bcast(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_BinomialColectiva(&n, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
         if (n == 0)
             break;
@@ -47,19 +45,59 @@ int main(int argc, char *argv[])
         }
 
         // COMUNICACION
+        // MPI_Reduce(&sum, &sumTotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        MPI_FlattreeColectiva(&sum, &sumTotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
         if (rank == 0)
         {
-            sumTotal += sum;
-            for (int i = 0; i < numprocs - 1; i++)
-            {
-                MPI_Recv(&recibido, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-                sumTotal += recibido;
-            }
             pi = h * sumTotal;
             printf("pi is approximately %.16f, Error is %.16f\n", pi, fabs(pi - PI25DT));
         }
-        else
-            MPI_Send(&sum, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-    }                   
+    }
     MPI_Finalize();
+}
+
+int MPI_FlattreeColectiva(void *sendbuf, void *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, int root, MPI_Comm comm)
+{
+    int numprocs, rank;
+    double localSum = 0, rec;
+    MPI_Status status;
+
+    if (datatype != MPI_DOUBLE)
+        return MPI_ERR_TYPE;
+
+    MPI_Comm_size(comm, &numprocs);
+    MPI_Comm_rank(comm, &rank);
+
+    if (rank == root)
+    {
+        localSum = *(double *)sendbuf;
+        for (int i = 1; i < numprocs; i++)
+        {
+            MPI_Recv(&rec, count, datatype, MPI_ANY_SOURCE, 0, comm, &status);
+            localSum += rec;
+        }
+        *(double *)recvbuf = localSum;
+    }
+    else
+    {
+        MPI_Send(sendbuf, count, datatype, root, 0, MPI_COMM_WORLD);
+    }
+    return MPI_SUCCESS;
+}
+
+int MPI_BinomialColectiva(void *buffer, int count, MPI_Datatype datatype, int root, MPI_Comm comm)
+{
+    int numprocs, rank;
+
+    MPI_Comm_size(comm, &numprocs);
+    MPI_Comm_rank(comm, &rank);
+
+    for (int i = 1; pow(2, i - 1) <= numprocs; i++)
+    {
+        if (rank < pow(2, i - 1) && rank + pow(2, i - 1) < numprocs)
+            MPI_Send(buffer, count, datatype, rank + (int)pow(2, i - 1), 0, comm);
+        if (rank >= pow(2, i - 1) && rank < pow(2, i))
+            MPI_Recv(buffer, count, datatype, rank - (int)pow(2, i - 1), 0, comm, MPI_STATUS_IGNORE);
+    }
+    return MPI_SUCCESS;
 }
